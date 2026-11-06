@@ -12,11 +12,17 @@ export const SKILLS = [
   'Alarm Systems','GPS Tracking','Home Automation','Solar CCTV','Cable Pulling / Wiring','AMC Service',
 ];
 
-export const ROLES = {
-  technician: 'Technician',
-  contractor: 'Contractor / Team lead',
-  employer: 'Company / Employer',
+// Category is decided by the system from the application and confirmed by a telecaller.
+// Members only ever see these friendly labels, never the letters.
+export const CAT_LABEL = { A: 'Company', B: 'Business', C: 'Technician' };
+
+export const KINDS = {
+  main: 'CCTV is my main business',
+  side: 'I run another business and do CCTV on the side',
+  tech: 'I work as a technician',
 };
+
+export const TEAM_SIZES = ['1-5', '6-15', '16+'];
 
 export const JOB_KINDS = {
   hiring: 'Staff needed',

@@ -1,5 +1,6 @@
 // Paste your Firebase WEB app config here (Firebase console > Project settings > Your apps > Web app).
 // Use a SEPARATE Firebase project for this community app, not the SHEYON CORP OMS project.
+// Also put google-services.json at app/android/app/google-services.json (see README).
 export const firebaseConfig = {
   apiKey: '',
   authDomain: '',

@@ -35,6 +35,9 @@ jobs:
           npm run build
           npx cap sync android
 
+      - name: Warn if google-services.json is missing
+        run: test -f android/app/google-services.json || echo "::warning::android/app/google-services.json is missing, Google sign-in will not work in this APK"
+
       - name: Build APK
         working-directory: app/android
         run: ./gradlew assembleDebug --no-daemon
@@ -54,4 +57,4 @@ jobs:
           gh release delete latest --yes --cleanup-tag || true
           gh release create latest CCTV-Technicians-TN.apk \
             --title "CCTV Technicians TN (latest build)" \
-            --notes "Debug-signed test build from commit ${GITHUB_SHA::7}. Install on Android and allow installs from this source."
+            --notes "Debug-signed test build from commit ${GITHUB_SHA::7}. Install on Android and allow installs from this source. Signing SHA-1 for Firebase: 23:62:6F:E3:A2:DC:15:F6:9A:1E:B1:D3:A7:11:9A:DD:59:7B:3D:66"

@@ -79,3 +79,8 @@ select.search{appearance:auto}
 @keyframes s{to{transform:rotate(360deg)}}
 .setup{padding:30px 20px}
 .setup code{background:var(--panel2);padding:2px 6px;border-radius:6px;font-size:13px}
+.seg{display:flex;gap:8px}
+.seg button{flex:1;padding:11px;border-radius:10px;border:1px solid var(--line);background:var(--panel2);color:var(--muted);font-weight:500}
+.seg button.on{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:700}
+.ck{display:flex;gap:10px;align-items:center;margin:9px 0;font-size:14px}
+.ck input{width:auto;margin:0}

@@ -2,65 +2,183 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
+    /* ---------- helpers ---------- */
     function signedIn() { return request.auth != null; }
-    function isAdmin() { return signedIn() && exists(/databases/$(database)/documents/admins/$(request.auth.uid)); }
+    function staffDoc() { return /databases/$(database)/documents/staff/$(request.auth.uid); }
+    function memberDoc() { return /databases/$(database)/documents/members/$(request.auth.uid); }
+
+    // staff/{uid} documents are created by hand in the Firebase console: { role: 'admin' | 'telecaller' }
+    function isStaff() { return signedIn() && exists(staffDoc()); }
+    function isAdmin() { return isStaff() && get(staffDoc()).data.role == 'admin'; }
+
+    // A verified, not-suspended member (members/{uid} is created only when a telecaller verifies the application)
+    function isVerifiedMember() {
+      return signedIn() && exists(memberDoc()) && !get(memberDoc()).data.get('suspended', false);
+    }
+    function isMember() { return isVerifiedMember() || isStaff(); }
+
+    function short(v, n) { return v is string && v.size() > 0 && v.size() <= n; }
+    function maxLen(v, n) { return v is string && v.size() <= n; }
     function mine(field) { return signedIn() && request.resource.data[field] == request.auth.uid; }
     function owns() { return signedIn() && resource.data.authorId == request.auth.uid; }
-    function short(v, n) { return v is string && v.size() > 0 && v.size() <= n; }
 
-    // Admins are added manually in the Firebase console (doc id = user uid). Nobody can write from the app.
-    match /admins/{uid} {
+    // Community is technical only: no links, no phone numbers inside post text
+    function clean(s) {
+      return !(s.matches('(?is).*(https?://|www[.]).*')) && !(s.matches('(?s).*[0-9]{10}.*'));
+    }
+    function isMobile(s) { return s is string && s.matches('[6-9][0-9]{9}'); }
+
+    /* ---------- applications (verification form) ---------- */
+    function autoCategory(d) {
+      return (d.office == 'yes' && d.gst == 'yes' && d.staff == 'yes') ? 'A'
+           : ((d.office == 'no' && d.gst == 'no') ? 'C' : 'B');
+    }
+    function validApplication(d) {
+      return short(d.name, 60)
+        && isMobile(d.phone)
+        && short(d.district, 30)
+        && d.office in ['yes', 'no']
+        && d.gst in ['yes', 'no']
+        && d.staff in ['yes', 'no']
+        && d.kind in ['main', 'side', 'tech']
+        && d.autoCategory == autoCategory(d)
+        && d.email == request.auth.token.email
+        && (d.gst == 'no' || (d.gstNo is string && d.gstNo.matches('[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]')))
+        && (d.office == 'no' || (short(d.bName, 80) && short(d.address, 200)))
+        && (d.office == 'yes' || (short(d.refName, 60) && isMobile(d.refPhone)))
+        && maxLen(d.teamSize, 10)
+        && maxLen(d.experience, 2);
+    }
+
+    match /applications/{uid} {
+      allow read: if signedIn() && (request.auth.uid == uid || isStaff());
+
+      allow create: if signedIn() && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly([
+             'name', 'phone', 'district', 'office', 'gst', 'gstNo', 'staff', 'teamSize', 'kind',
+             'bName', 'address', 'refName', 'refPhone', 'experience',
+             'email', 'autoCategory', 'status', 'createdAt', 'updatedAt'])
+        && request.resource.data.status == 'pending'
+        && validApplication(request.resource.data);
+
+      allow update:
+        // applicant: edit and resubmit while not yet decided
+        if (signedIn() && request.auth.uid == uid
+             && resource.data.status in ['pending', 'needs_info']
+             && request.resource.data.status == 'pending'
+             && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+                  'name', 'phone', 'district', 'office', 'gst', 'gstNo', 'staff', 'teamSize', 'kind',
+                  'bName', 'address', 'refName', 'refPhone', 'experience',
+                  'autoCategory', 'status', 'updatedAt'])
+             && validApplication(request.resource.data))
+        // telecaller or admin: decide (never on their own application)
+        || (isStaff() && request.auth.uid != uid
+             && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+                  'status', 'category', 'callNotes', 'checks', 'verifiedBy', 'verifiedAt', 'updatedAt'])
+             && request.resource.data.status in ['pending', 'needs_info', 'verified', 'rejected']
+             && (request.resource.data.status != 'verified'
+                  || (request.resource.data.category in ['A', 'B', 'C']
+                      && request.resource.data.verifiedBy == request.auth.uid)));
+
+      allow delete: if isAdmin();
+    }
+
+    /* ---------- staff ---------- */
+    match /staff/{uid} {
       allow read: if signedIn() && request.auth.uid == uid;
       allow write: if false;
     }
 
-    // Member profiles. Visible to signed-in members only.
-    match /users/{uid} {
-      allow read: if signedIn();
-      allow create: if signedIn() && request.auth.uid == uid
-        && short(request.resource.data.name, 60)
-        && short(request.resource.data.phone, 15)
-        && short(request.resource.data.district, 30)
-        && request.resource.data.role in ['technician', 'contractor', 'employer'];
-      allow update: if signedIn() && request.auth.uid == uid
-        && short(request.resource.data.name, 60)
-        && short(request.resource.data.phone, 15)
-        && request.resource.data.role in ['technician', 'contractor', 'employer'];
+    /* ---------- members (public profile of verified people) ---------- */
+    match /members/{uid} {
+      allow read: if isMember() || (signedIn() && request.auth.uid == uid);
+
+      // created by staff when they verify an application
+      allow create: if isStaff() && request.auth.uid != uid
+        && request.resource.data.keys().hasOnly(
+             ['name', 'phone', 'district', 'category', 'businessName', 'experience', 'verifiedAt'])
+        && request.resource.data.category in ['A', 'B', 'C'];
+
+      allow update:
+        // member edits own about + skills only
+        if (signedIn() && request.auth.uid == uid
+             && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['bio', 'skills'])
+             && maxLen(request.resource.data.get('bio', ''), 400)
+             && clean(request.resource.data.get('bio', ''))
+             && request.resource.data.get('skills', []).size() <= 16)
+        // staff may correct profile facts or re-categorise
+        || (isStaff() && request.auth.uid != uid
+             && request.resource.data.diff(resource.data).affectedKeys().hasOnly(
+                  ['name', 'phone', 'district', 'category', 'businessName', 'experience', 'verifiedAt'])
+             && request.resource.data.category in ['A', 'B', 'C'])
+        // admin suspends or restores
+        || (isAdmin() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['suspended']));
+
       allow delete: if isAdmin();
     }
 
+    /* ---------- community content (verified members only) ---------- */
     match /posts/{postId} {
-      allow read: if signedIn();
-      allow create: if mine('authorId')
+      allow read: if isMember();
+      allow create: if isMember() && mine('authorId')
         && request.resource.data.type in ['knowledge', 'doubt']
         && short(request.resource.data.title, 120)
-        && short(request.resource.data.body, 2000);
+        && short(request.resource.data.body, 2000)
+        && clean(request.resource.data.title)
+        && clean(request.resource.data.body);
       allow update: if false;
-      allow delete: if owns() || isAdmin();
+      allow delete: if (isMember() && owns()) || isAdmin();
 
       match /comments/{commentId} {
-        allow read: if signedIn();
-        allow create: if mine('authorId') && short(request.resource.data.body, 1000);
+        allow read: if isMember();
+        allow create: if isMember() && mine('authorId')
+          && short(request.resource.data.body, 1000)
+          && clean(request.resource.data.body);
         allow update: if false;
-        allow delete: if (signedIn() && resource.data.authorId == request.auth.uid) || isAdmin();
+        allow delete: if (isMember() && resource.data.authorId == request.auth.uid) || isAdmin();
       }
     }
 
     match /jobs/{jobId} {
-      allow read: if signedIn();
-      allow create: if mine('authorId')
+      allow read: if isMember();
+      allow create: if isMember() && mine('authorId')
         && request.resource.data.kind in ['hiring', 'contract', 'available']
         && short(request.resource.data.title, 100)
+        && maxLen(request.resource.data.details, 800)
+        && clean(request.resource.data.title)
+        && clean(request.resource.data.details)
+        && isMobile(request.resource.data.phone)
         && request.resource.data.status == 'open';
-      // owner may only open/close a listing
-      allow update: if owns()
+      allow update: if isMember() && owns()
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status'])
         && request.resource.data.status in ['open', 'closed'];
-      allow delete: if owns() || isAdmin();
+      allow delete: if (isMember() && owns()) || isAdmin();
     }
 
+    /* ---------- orders (official offers from SHEYON CORP, member requests) ---------- */
+    match /offers/{offerId} {
+      allow read: if isMember();
+      allow write: if isAdmin();
+    }
+
+    match /orders/{orderId} {
+      allow read: if (signedIn() && resource.data.uid == request.auth.uid) || isAdmin();
+      allow create: if isVerifiedMember()
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.status == 'requested'
+        && short(request.resource.data.offerTitle, 120)
+        && maxLen(request.resource.data.qty, 20)
+        && maxLen(request.resource.data.note, 300)
+        && clean(request.resource.data.note);
+      allow update: if isAdmin()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt'])
+        && request.resource.data.status in ['requested', 'confirmed', 'dispatched', 'cancelled'];
+      allow delete: if isAdmin();
+    }
+
+    /* ---------- reports ---------- */
     match /reports/{reportId} {
-      allow create: if mine('reporterId') && short(request.resource.data.path, 200);
+      allow create: if isMember() && mine('reporterId') && short(request.resource.data.path, 200);
       allow read, delete: if isAdmin();
       allow update: if false;
     }
