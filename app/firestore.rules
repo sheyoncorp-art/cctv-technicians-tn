@@ -1,0 +1,68 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+    function isAdmin() { return signedIn() && exists(/databases/$(database)/documents/admins/$(request.auth.uid)); }
+    function mine(field) { return signedIn() && request.resource.data[field] == request.auth.uid; }
+    function owns() { return signedIn() && resource.data.authorId == request.auth.uid; }
+    function short(v, n) { return v is string && v.size() > 0 && v.size() <= n; }
+
+    // Admins are added manually in the Firebase console (doc id = user uid). Nobody can write from the app.
+    match /admins/{uid} {
+      allow read: if signedIn() && request.auth.uid == uid;
+      allow write: if false;
+    }
+
+    // Member profiles. Visible to signed-in members only.
+    match /users/{uid} {
+      allow read: if signedIn();
+      allow create: if signedIn() && request.auth.uid == uid
+        && short(request.resource.data.name, 60)
+        && short(request.resource.data.phone, 15)
+        && short(request.resource.data.district, 30)
+        && request.resource.data.role in ['technician', 'contractor', 'employer'];
+      allow update: if signedIn() && request.auth.uid == uid
+        && short(request.resource.data.name, 60)
+        && short(request.resource.data.phone, 15)
+        && request.resource.data.role in ['technician', 'contractor', 'employer'];
+      allow delete: if isAdmin();
+    }
+
+    match /posts/{postId} {
+      allow read: if signedIn();
+      allow create: if mine('authorId')
+        && request.resource.data.type in ['knowledge', 'doubt']
+        && short(request.resource.data.title, 120)
+        && short(request.resource.data.body, 2000);
+      allow update: if false;
+      allow delete: if owns() || isAdmin();
+
+      match /comments/{commentId} {
+        allow read: if signedIn();
+        allow create: if mine('authorId') && short(request.resource.data.body, 1000);
+        allow update: if false;
+        allow delete: if (signedIn() && resource.data.authorId == request.auth.uid) || isAdmin();
+      }
+    }
+
+    match /jobs/{jobId} {
+      allow read: if signedIn();
+      allow create: if mine('authorId')
+        && request.resource.data.kind in ['hiring', 'contract', 'available']
+        && short(request.resource.data.title, 100)
+        && request.resource.data.status == 'open';
+      // owner may only open/close a listing
+      allow update: if owns()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status'])
+        && request.resource.data.status in ['open', 'closed'];
+      allow delete: if owns() || isAdmin();
+    }
+
+    match /reports/{reportId} {
+      allow create: if mine('reporterId') && short(request.resource.data.path, 200);
+      allow read, delete: if isAdmin();
+      allow update: if false;
+    }
+  }
+}

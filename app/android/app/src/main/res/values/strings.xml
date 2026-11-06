@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">CCTV Technicians TN</string>
+    <string name="title_activity_main">CCTV Technicians TN</string>
+    <string name="package_name">com.sheyoncorp.cctvtechnicianstn</string>
+    <string name="custom_url_scheme">com.sheyoncorp.cctvtechnicianstn</string>
+</resources>

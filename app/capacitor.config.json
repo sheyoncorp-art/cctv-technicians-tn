@@ -1,0 +1,15 @@
+{
+  "appId": "com.sheyoncorp.cctvtechnicianstn",
+  "appName": "CCTV Technicians TN",
+  "webDir": "dist",
+  "android": {
+    "allowMixedContent": false,
+    "adjustMarginsForEdgeToEdge": "force"
+  },
+  "plugins": {
+    "StatusBar": {
+      "style": "DARK",
+      "backgroundColor": "#0b1220"
+    }
+  }
+}
